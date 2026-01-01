@@ -1,99 +1,160 @@
 import math
 import streamlit as st
+from services.segment_service import (
+    load_segments,
+    add_or_update_segment,
+    delete_segment,
+)
 
+# ---------------- Page Config ----------------
 st.set_page_config(layout="wide")
-st.title("Option Order Calculator")
+st.title("📈 Option Order Calculator")
 
-# Segment and Lot Size
+# ---------------- Sidebar: Segment Management ----------------
+st.sidebar.header("⚙️ Manage Segments")
+
+segments = load_segments()
+
+with st.sidebar.form("add_segment"):
+    seg_name = st.text_input("Segment Name (e.g. NIFTY)")
+    lot_size = st.number_input("Lot Size", min_value=1, step=1)
+    save = st.form_submit_button("Save / Update")
+
+    if save:
+        if seg_name.strip():
+            add_or_update_segment(seg_name, lot_size)
+            st.sidebar.success("Segment saved")
+            st.rerun()
+        else:
+            st.sidebar.error("Segment name required")
+
+if segments:
+    del_seg = st.sidebar.selectbox(
+        "Delete Segment",
+        ["-- Select --"] + list(segments.keys())
+    )
+    if del_seg != "-- Select --":
+        if st.sidebar.button("Delete Segment"):
+            delete_segment(del_seg)
+            st.sidebar.warning("Segment deleted")
+            st.rerun()
+
+# ---------------- Segment & Lot Size ----------------
+segments = load_segments()
+
+if not segments:
+    st.warning("No segments available. Add from sidebar.")
+    st.stop()
+
 col_seg, col_lot = st.columns([3, 1])
-with col_seg:
-    segment = st.radio("Segment", ["Nifty", "Sensex", "BankNifty", "FinNifty", "MIDC"], horizontal=True)
-with col_lot:
-    segment_lot_sizes = {
-        "Nifty": 75,
-        "Sensex": 20,
-        "BankNifty": 30,
-        "FinNifty": 65,
-        "MIDC": 120
-    }
-    lot_size = segment_lot_sizes[segment]
-    st.number_input("Lot Size", value=lot_size, step=1, disabled=True, label_visibility="collapsed")
 
-# Input and Summary Side by Side
+with col_seg:
+    segment = st.radio(
+        "Segment",
+        list(segments.keys()) + ["CUSTOM"],
+        horizontal=True
+    )
+
+with col_lot:
+    if segment == "CUSTOM":
+        lot_size = st.number_input(
+            "Enter Lot Size",
+            min_value=1,
+            step=1,
+            value=50
+        )
+    else:
+        lot_size = segments[segment]
+        st.number_input(
+            "Lot Size",
+            value=lot_size,
+            disabled=True,
+            label_visibility="collapsed"
+        )
+
+# ---------------- Layout ----------------
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    # Initial Capital Input
-    st.markdown("**Initial Capital (Rs) or enter manually**")
-    cap_col1, cap_col2 = st.columns([2, 1])
-    capital_options = [i for i in range(50000, 10000001, 50000)] + ["Custom"]
-    with cap_col1:
-        selected_capital_option = st.selectbox("Choose or select custom", capital_options, label_visibility="collapsed")
-    with cap_col2:
-        custom_capital = st.number_input(" ", value=50000.0, step=1000.0, label_visibility="collapsed", disabled=(selected_capital_option != "Custom"))
-    initial_capital = float(custom_capital if selected_capital_option == "Custom" else selected_capital_option)
+    # -------- Initial Capital --------
+    st.markdown("**Initial Capital (Rs)**")
+    initial_capital = st.number_input(
+        "Capital",
+        min_value=1000.0,
+        step=1000.0,
+        value=50000.0,
+        label_visibility="collapsed"
+    )
 
-    # LTP Input
-    st.markdown("**LTP (Last Traded Price) or enter manually**")
-    ltp_col1, ltp_col2 = st.columns([2, 1])
-    ltp_options = [i for i in range(100, 301, 10)] + ["Custom"]
-    with ltp_col1:
-        selected_ltp_option = st.selectbox("Choose or select custom", ltp_options, label_visibility="collapsed")
-    with ltp_col2:
-        custom_ltp = st.number_input("  ", value=200.0, step=1.0, label_visibility="collapsed", disabled=(selected_ltp_option != "Custom"))
-    ltp = float(custom_ltp if selected_ltp_option == "Custom" else selected_ltp_option)
+    # -------- LTP --------
+    st.markdown("**LTP (Last Traded Price)**")
+    ltp = st.number_input(
+        "LTP",
+        min_value=1.0,
+        step=1.0,
+        value=200.0,
+        label_visibility="collapsed"
+    )
 
-    # Capital Percentage
-    capital_percent = st.slider("Capital Percentage to Use (%)", min_value=25, max_value=100, step=25, value=75)
+    # -------- Capital Percentage --------
+    capital_percent = st.slider(
+        "Capital Percentage to Use (%)",
+        min_value=25,
+        max_value=100,
+        step=25,
+        value=75
+    )
 
     calculate = st.button("Calculate Order")
-# Calculation logic
+
+# ---------------- Calculation Logic ----------------
 def calculate_order(initial_capital, ltp, lot_size, capital_percent):
     usable_capital = (capital_percent / 100) * initial_capital
     total_units = usable_capital / ltp
 
-    # Calculate both floor and ceil lot sizes
     floor_lots = math.floor(total_units / lot_size)
     ceil_lots = math.ceil(total_units / lot_size)
 
-    # Calculate total cost for both
     floor_cost = floor_lots * lot_size * ltp
     ceil_cost = ceil_lots * lot_size * ltp
 
-    # Choose the one closer to usable capital
-    if abs(floor_cost - usable_capital) < abs(ceil_cost - usable_capital):
+    if abs(floor_cost - usable_capital) <= abs(ceil_cost - usable_capital):
         full_lots = floor_lots
         total_cost = floor_cost
     else:
         full_lots = ceil_lots
         total_cost = ceil_cost
 
-    total_buyable_units = full_lots * lot_size
-
-    summary = {
-        "Initial Capital (Rs)": initial_capital,
+    return {
+        "Segment": segment,
+        "Initial Capital (Rs)": round(initial_capital, 2),
         "Capital Used (%)": capital_percent,
-        "Usable Capital (Rs)": usable_capital,
-        "LTP (Rs)": ltp,
+        "Usable Capital (Rs)": round(usable_capital, 2),
+        "LTP (Rs)": round(ltp, 2),
         "Lot Size": lot_size,
         "Total Options (Units)": int(total_units),
-        "Total Buyable Units": total_buyable_units,
+        "Total Buyable Units": full_lots * lot_size,
         "Full Lots": full_lots,
-        "Total Cost (Rs)": total_cost,
-        "Remaining Capital (Rs)": usable_capital - total_cost
+        "Total Cost (Rs)": round(total_cost, 2),
+        "Remaining Capital (Rs)": round(usable_capital - total_cost, 2),
     }
-    return summary
 
-# Right side output
+# ---------------- Output ----------------
 if calculate:
-    result = calculate_order(initial_capital, ltp, lot_size, capital_percent)
+    result = calculate_order(
+        initial_capital,
+        ltp,
+        lot_size,
+        capital_percent
+    )
+
     with col2:
         st.subheader("📊 Order Summary")
         for key, value in result.items():
-            # st.write(f"**{key}**: {value}")
             if key == "Total Buyable Units":
-                st.markdown(f"<span style='color:green'><strong>{key}:</strong> {value}</span>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<span style='color:green'><strong>{key}:</strong> {value}</span>",
+                    unsafe_allow_html=True,
+                )
             else:
                 st.write(f"**{key}**: {value}")
-
-
